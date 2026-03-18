@@ -14,34 +14,48 @@ function formatError(err: unknown): string {
 /**
  * AppleScript snippet that sets `targetFolder` based on a folder name string.
  * The variable `folderParam` must be set before this snippet runs.
+ * Iterates mail folders to handle multi-account setups; for Inbox prefers
+ * the account with the most unread messages.
  */
 const FOLDER_SELECTOR = `
-  set targetFolder to inbox
+  set targetFolder to missing value
+  set searchName to ""
   if folderParam is "sent" or folderParam is "Sent Items" then
-    try
-      set targetFolder to sent items folder
-    on error
-      set targetFolder to inbox
-    end try
+    set searchName to "Sent Items"
   else if folderParam is "drafts" or folderParam is "Drafts" then
-    try
-      set targetFolder to drafts folder
-    on error
-      set targetFolder to inbox
-    end try
+    set searchName to "Drafts"
   else if folderParam is "deleted" or folderParam is "Deleted Items" or folderParam is "Trash" then
+    set searchName to "Deleted Items"
+  else if folderParam is not "" and folderParam is not "inbox" and folderParam is not "Inbox" then
+    set searchName to folderParam
+  else
+    set searchName to "Inbox"
+  end if
+
+  set bestUnread to -1
+  repeat with f in mail folders
+    if (name of f) is searchName then
+      if searchName is "Inbox" then
+        set fUnread to 0
+        try
+          set fUnread to unread count of f
+        end try
+        if fUnread > bestUnread then
+          set bestUnread to fUnread
+          set targetFolder to f
+        end if
+      else
+        if targetFolder is missing value then
+          set targetFolder to f
+        end if
+      end if
+    end if
+  end repeat
+
+  if targetFolder is missing value then
     try
-      set targetFolder to deleted items folder
-    on error
       set targetFolder to inbox
     end try
-  else if folderParam is not "" and folderParam is not "inbox" and folderParam is not "Inbox" then
-    repeat with f in mail folders
-      if name of f = folderParam then
-        set targetFolder to f
-        exit repeat
-      end if
-    end repeat
   end if
 `;
 
@@ -84,7 +98,7 @@ const FORMAT_MESSAGE = `
 
   set msgDate to ""
   try
-    set msgDate to (date received of msg) as string
+    set msgDate to (time received of msg) as string
   end try
 
   set msgIsRead to "false"
@@ -94,12 +108,13 @@ const FORMAT_MESSAGE = `
 
   set hasAttach to "false"
   try
-    if (count of mail attachments of msg) > 0 then set hasAttach to "true"
+    if (count of attachments of msg) > 0 then set hasAttach to "true"
   end try
 
   set preview to ""
   try
-    set fullContent to content of msg
+    set fullContent to plain text content of msg
+    if fullContent is missing value then set fullContent to ""
     if length of fullContent > 150 then
       set preview to (text 1 thru 150 of fullContent)
     else
@@ -177,7 +192,7 @@ tell application "Microsoft Outlook"
 
   set output to ""
   set msgCount to 0
-  set allMsgs to email messages of targetFolder
+  set allMsgs to messages of targetFolder
 
   repeat with msg in allMsgs
     if msgCount >= ${limitNum} then exit repeat
@@ -248,38 +263,14 @@ tell application "Microsoft Outlook"
   set targetMsg to missing value
   set targetFolderName to ""
 
-  -- Search inbox
-  try
-    set targetMsg to (first email message of inbox whose id = ${message_id})
-    set targetFolderName to "Inbox"
-  end try
-
-  -- Search sent items
-  if targetMsg is missing value then
+  -- Search all mail folders
+  repeat with f in mail folders
     try
-      set targetMsg to (first email message of sent items folder whose id = ${message_id})
-      set targetFolderName to "Sent Items"
+      set targetMsg to (first message of f whose id = ${message_id})
+      set targetFolderName to name of f
+      exit repeat
     end try
-  end if
-
-  -- Search drafts
-  if targetMsg is missing value then
-    try
-      set targetMsg to (first email message of drafts folder whose id = ${message_id})
-      set targetFolderName to "Drafts"
-    end try
-  end if
-
-  -- Search all other folders
-  if targetMsg is missing value then
-    repeat with f in mail folders
-      try
-        set targetMsg to (first email message of f whose id = ${message_id})
-        set targetFolderName to name of f
-        exit repeat
-      end try
-    end repeat
-  end if
+  end repeat
 
   if targetMsg is missing value then
     return "ERROR: Message not found"
@@ -315,7 +306,8 @@ tell application "Microsoft Outlook"
         if rName is missing value then set rName to ""
       end try
       try
-        set rEmail to address of r
+        set rAddr to email address of r
+        set rEmail to address of rAddr
         if rEmail is missing value then set rEmail to ""
       end try
       if toList is "" then
@@ -328,7 +320,7 @@ tell application "Microsoft Outlook"
 
   set msgDate to ""
   try
-    set msgDate to (date received of msg) as string
+    set msgDate to (time received of msg) as string
   end try
 
   set msgIsRead to "false"
@@ -338,12 +330,12 @@ tell application "Microsoft Outlook"
 
   set hasAttach to "false"
   try
-    if (count of mail attachments of msg) > 0 then set hasAttach to "true"
+    if (count of attachments of msg) > 0 then set hasAttach to "true"
   end try
 
   set msgBody to ""
   try
-    set msgBody to content of msg
+    set msgBody to plain text content of msg
     if msgBody is missing value then set msgBody to ""
   end try
 
@@ -437,7 +429,29 @@ ${REPLACE_HANDLER}
 tell application "Microsoft Outlook"
   set output to ""
   set msgCount to 0
-  set allMsgs to email messages of inbox
+
+  -- Find inbox with most unread (handles multi-account)
+  set activeInbox to missing value
+  set bestUnread to -1
+  repeat with f in mail folders
+    if (name of f) is "Inbox" then
+      set fUnread to 0
+      try
+        set fUnread to unread count of f
+      end try
+      if fUnread > bestUnread then
+        set bestUnread to fUnread
+        set activeInbox to f
+      end if
+    end if
+  end repeat
+  if activeInbox is missing value then
+    try
+      set activeInbox to inbox
+    end try
+  end if
+
+  set allMsgs to messages of activeInbox
 
   repeat with msg in allMsgs
     if msgCount >= ${scanCount} then exit repeat
@@ -560,22 +574,12 @@ return "sent"
 tell application "Microsoft Outlook"
   set targetMsg to missing value
 
-  try
-    set targetMsg to (first email message of inbox whose id = ${message_id})
-  end try
-  if targetMsg is missing value then
+  repeat with f in mail folders
     try
-      set targetMsg to (first email message of sent items folder whose id = ${message_id})
+      set targetMsg to (first message of f whose id = ${message_id})
+      exit repeat
     end try
-  end if
-  if targetMsg is missing value then
-    repeat with f in mail folders
-      try
-        set targetMsg to (first email message of f whose id = ${message_id})
-        exit repeat
-      end try
-    end repeat
-  end if
+  end repeat
 
   if targetMsg is missing value then
     return "ERROR: Message not found"
@@ -633,22 +637,12 @@ end tell
 tell application "Microsoft Outlook"
   set targetMsg to missing value
 
-  try
-    set targetMsg to (first email message of inbox whose id = ${message_id})
-  end try
-  if targetMsg is missing value then
+  repeat with f in mail folders
     try
-      set targetMsg to (first email message of sent items folder whose id = ${message_id})
+      set targetMsg to (first message of f whose id = ${message_id})
+      exit repeat
     end try
-  end if
-  if targetMsg is missing value then
-    repeat with f in mail folders
-      try
-        set targetMsg to (first email message of f whose id = ${message_id})
-        exit repeat
-      end try
-    end repeat
-  end if
+  end repeat
 
   if targetMsg is missing value then
     return "ERROR: Message not found"
@@ -693,17 +687,12 @@ end tell
 tell application "Microsoft Outlook"
   set targetMsg to missing value
 
-  try
-    set targetMsg to (first email message of inbox whose id = ${message_id})
-  end try
-  if targetMsg is missing value then
-    repeat with f in mail folders
-      try
-        set targetMsg to (first email message of f whose id = ${message_id})
-        exit repeat
-      end try
-    end repeat
-  end if
+  repeat with f in mail folders
+    try
+      set targetMsg to (first message of f whose id = ${message_id})
+      exit repeat
+    end try
+  end repeat
 
   if targetMsg is missing value then
     return "ERROR: Message not found"
@@ -753,17 +742,12 @@ end tell
 tell application "Microsoft Outlook"
   set targetMsg to missing value
 
-  try
-    set targetMsg to (first email message of inbox whose id = ${message_id})
-  end try
-  if targetMsg is missing value then
-    repeat with f in mail folders
-      try
-        set targetMsg to (first email message of f whose id = ${message_id})
-        exit repeat
-      end try
-    end repeat
-  end if
+  repeat with f in mail folders
+    try
+      set targetMsg to (first message of f whose id = ${message_id})
+      exit repeat
+    end try
+  end repeat
 
   if targetMsg is missing value then
     return "ERROR: Message not found"
@@ -801,50 +785,71 @@ end tell
       inputSchema: {},
     },
     async () => {
+      // Derive accounts by inspecting the first message in each Inbox folder.
+      // exchange/imap/pop account collections are empty in modern Outlook for Mac.
       const script = `
 tell application "Microsoft Outlook"
   set output to ""
+  set seenNames to {}
 
-  repeat with acct in exchange accounts
-    set acctName to ""
-    set acctEmail to ""
-    try
-      set acctName to name of acct
-      if acctName is missing value then set acctName to ""
-    end try
-    try
-      set acctEmail to email address of acct
-      if acctEmail is missing value then set acctEmail to ""
-    end try
-    set output to output & acctName & tab & acctEmail & tab & "exchange" & linefeed
-  end repeat
+  repeat with f in mail folders
+    if (name of f) is "Inbox" then
+      set displayName to ""
 
-  repeat with acct in imap accounts
-    set acctName to ""
-    set acctEmail to ""
-    try
-      set acctName to name of acct
-      if acctName is missing value then set acctName to ""
-    end try
-    try
-      set acctEmail to email address of acct
-      if acctEmail is missing value then set acctEmail to ""
-    end try
-    set output to output & acctName & tab & acctEmail & tab & "imap" & linefeed
-  end repeat
+      -- Try to get account directly from the folder (works even for empty inboxes)
+      try
+        set acct to account of f
+        try
+          set acctEmail to email address of acct
+          if acctEmail is not missing value and acctEmail is not "" then
+            set displayName to acctEmail
+          end if
+        end try
+        if displayName is "" then
+          try
+            set acctName to name of acct
+            if acctName is not missing value then set displayName to acctName
+          end try
+        end if
+      end try
 
-  repeat with acct in pop accounts
-    set acctName to ""
-    set acctEmail to ""
-    try
-      set acctName to name of acct
-      if acctName is missing value then set acctName to ""
-    end try
-    try
-      set acctEmail to email address of acct
-      if acctEmail is missing value then set acctEmail to ""
-    end try
-    set output to output & acctName & tab & acctEmail & tab & "pop" & linefeed
+      -- Fallback: derive from first message if folder approach failed
+      if displayName is "" then
+        set msgList to every message of f
+        if (count of msgList) > 0 then
+          try
+            set acct to account of (item 1 of msgList)
+            try
+              set acctEmail to email address of acct
+              if acctEmail is not missing value and acctEmail is not "" then
+                set displayName to acctEmail
+              end if
+            end try
+            if displayName is "" then
+              try
+                set acctName to name of acct
+                if acctName is not missing value then set displayName to acctName
+              end try
+            end if
+          end try
+        end if
+      end if
+
+      if displayName is not "" then
+        set alreadySeen to false
+        repeat with seen in seenNames
+          if seen is displayName then
+            set alreadySeen to true
+            exit repeat
+          end if
+        end repeat
+        if not alreadySeen then
+          set end of seenNames to displayName
+          set unreadCnt to unread count of f
+          set output to output & displayName & tab & (unreadCnt as string) & linefeed
+        end if
+      end if
+    end if
   end repeat
 
   return output
@@ -854,11 +859,10 @@ end tell
         const raw = await runAppleScript(script);
         const rows = parseTSV(raw);
         const accounts = rows
-          .filter((r) => r.length >= 2)
+          .filter((r) => r.length >= 1)
           .map((r) => ({
-            name: r[0] ?? '',
-            email: r[1] ?? '',
-            type: r[2] ?? '',
+            email: r[0] ?? '',
+            inboxUnread: parseInt(r[1] ?? '0', 10),
           }));
         if (accounts.length === 0) {
           return { content: [{ type: 'text' as const, text: 'No accounts found.' }] };
