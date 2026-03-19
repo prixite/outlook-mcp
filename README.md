@@ -49,16 +49,26 @@ Or run in dev mode (no build needed):
 
 | Tool | Description |
 |------|-------------|
-| `outlook_list_messages` | List recent messages from a folder (inbox, sent, drafts, deleted, or custom) |
+| `outlook_list_messages` | List recent messages from a folder; optional `account` filter to target a specific account |
 | `outlook_read_message` | Read the full content of a message by ID |
-| `outlook_search_messages` | Search inbox by keyword (subject, sender, preview) |
+| `outlook_search_messages` | Search inbox by keyword (subject, sender, preview); optional `account` filter |
 | `outlook_send_email` | Compose and send an email |
 | `outlook_reply` | Reply to a message (supports reply-all) |
 | `outlook_forward` | Forward a message to one or more recipients |
 | `outlook_delete_message` | Move a message to Deleted Items |
 | `outlook_mark_read` | Mark a message as read or unread |
-| `outlook_list_folders` | List all mail folders with unread counts |
-| `outlook_list_accounts` | List all configured email accounts (Exchange, IMAP, POP) |
+| `outlook_list_folders` | List all mail folders with unread counts and account email |
+| `outlook_list_accounts` | List all configured email accounts with inbox unread counts |
+
+#### Multi-account support
+
+`outlook_list_messages` and `outlook_search_messages` accept an optional `account` parameter:
+
+- Pass an account email (e.g. `"you@company.com"`) to target that account's folders.
+- Pass `"unknown"` to target accounts whose email cannot be resolved via AppleScript (e.g. Google Workspace accounts in new Outlook for Mac).
+- Omit to use the default inbox (highest unread count across accounts).
+
+Use `outlook_list_accounts` to see available accounts, and `outlook_list_folders` to inspect which folders belong to which account.
 
 ### Calendar
 
