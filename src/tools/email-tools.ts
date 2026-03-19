@@ -13,9 +13,10 @@ function formatError(err: unknown): string {
 
 /**
  * AppleScript snippet that sets `targetFolder` based on a folder name string.
- * The variable `folderParam` must be set before this snippet runs.
- * Iterates mail folders to handle multi-account setups; for Inbox prefers
- * the account with the most unread messages.
+ * The variables `folderParam` and `accountFilter` must be set before this runs.
+ * If `accountFilter` is non-empty, only folders belonging to that account
+ * (matched by email address or account name) are considered.
+ * For Inbox with no account filter, prefers the account with the most unread.
  */
 const FOLDER_SELECTOR = `
   set targetFolder to missing value
@@ -35,27 +36,48 @@ const FOLDER_SELECTOR = `
   set bestUnread to -1
   repeat with f in mail folders
     if (name of f) is searchName then
-      if searchName is "Inbox" then
-        set fUnread to 0
+      set accountOk to true
+      if accountFilter is not "" then
+        set accountOk to false
         try
-          set fUnread to unread count of f
+          set folderAcct to account of f
+          try
+            if (email address of folderAcct) is accountFilter then set accountOk to true
+          end try
+          if not accountOk then
+            try
+              if (name of folderAcct) is accountFilter then set accountOk to true
+            end try
+          end if
         end try
-        if fUnread > bestUnread then
-          set bestUnread to fUnread
-          set targetFolder to f
-        end if
-      else
-        if targetFolder is missing value then
-          set targetFolder to f
+      end if
+      if accountOk then
+        if searchName is "Inbox" and accountFilter is "" then
+          set fUnread to 0
+          try
+            set fUnread to unread count of f
+          end try
+          if fUnread > bestUnread then
+            set bestUnread to fUnread
+            set targetFolder to f
+          end if
+        else if accountOk then
+          if targetFolder is missing value then
+            set targetFolder to f
+          end if
         end if
       end if
     end if
   end repeat
 
   if targetFolder is missing value then
-    try
-      set targetFolder to inbox
-    end try
+    if accountFilter is "" then
+      try
+        set targetFolder to inbox
+      end try
+    else
+      return "ERROR: No folder found for account " & accountFilter
+    end if
   end if
 `;
 
@@ -163,6 +185,11 @@ export function registerEmailTools(server: McpServer): void {
           .optional()
           .default('inbox')
           .describe('Folder name: "inbox", "sent", "drafts", "deleted", or a custom folder name'),
+        account: z
+          .string()
+          .optional()
+          .default('')
+          .describe('Account email to filter by (e.g. "you@toptal.com"). Use outlook_list_accounts to see available accounts.'),
         limit: z
           .number()
           .int()
@@ -178,8 +205,9 @@ export function registerEmailTools(server: McpServer): void {
           .describe('If true, return only unread messages'),
       },
     },
-    async ({ folder, limit, unread_only }) => {
+    async ({ folder, account, limit, unread_only }) => {
       const folderParam = folder ?? 'inbox';
+      const accountFilter = account ?? '';
       const limitNum = limit ?? 20;
       const unreadOnly = unread_only ?? false;
 
@@ -188,6 +216,7 @@ ${REPLACE_HANDLER}
 
 tell application "Microsoft Outlook"
   set folderParam to ${asString(folderParam)}
+  set accountFilter to ${asString(accountFilter)}
   ${FOLDER_SELECTOR}
 
   set output to ""
@@ -220,6 +249,9 @@ end tell
 `;
       try {
         const raw = await runAppleScript(script);
+        if (raw.startsWith('ERROR:')) {
+          return { content: [{ type: 'text' as const, text: raw }], isError: true };
+        }
         const messages = parseMessageRows(parseTSV(raw), folderParam);
         if (messages.length === 0) {
           return {
@@ -399,6 +431,11 @@ end tell
           .string()
           .min(1)
           .describe('Search keyword to match against subject, sender name, or sender email'),
+        account: z
+          .string()
+          .optional()
+          .default('')
+          .describe('Account email to filter by (e.g. "you@toptal.com"). Use outlook_list_accounts to see available accounts.'),
         limit: z
           .number()
           .int()
@@ -417,9 +454,10 @@ end tell
           .describe('How many recent inbox messages to scan (default 100)'),
       },
     },
-    async ({ query, limit, scan_count }) => {
+    async ({ query, account, limit, scan_count }) => {
       const scanCount = scan_count ?? 100;
       const maxResults = limit ?? 10;
+      const accountFilter = account ?? '';
       const lowerQuery = query.toLowerCase();
 
       // Fetch recent messages from inbox, filter client-side
@@ -429,23 +467,49 @@ ${REPLACE_HANDLER}
 tell application "Microsoft Outlook"
   set output to ""
   set msgCount to 0
+  set accountFilter to ${asString(accountFilter)}
 
-  -- Find inbox with most unread (handles multi-account)
+  -- Find inbox; if accountFilter set, match that account; otherwise pick most unread
   set activeInbox to missing value
   set bestUnread to -1
   repeat with f in mail folders
     if (name of f) is "Inbox" then
-      set fUnread to 0
-      try
-        set fUnread to unread count of f
-      end try
-      if fUnread > bestUnread then
-        set bestUnread to fUnread
-        set activeInbox to f
+      set accountOk to true
+      if accountFilter is not "" then
+        set accountOk to false
+        try
+          set folderAcct to account of f
+          try
+            if (email address of folderAcct) is accountFilter then set accountOk to true
+          end try
+          if not accountOk then
+            try
+              if (name of folderAcct) is accountFilter then set accountOk to true
+            end try
+          end if
+        end try
+      end if
+      if accountOk then
+        if accountFilter is not "" then
+          set activeInbox to f
+          exit repeat
+        else
+          set fUnread to 0
+          try
+            set fUnread to unread count of f
+          end try
+          if fUnread > bestUnread then
+            set bestUnread to fUnread
+            set activeInbox to f
+          end if
+        end if
       end if
     end if
   end repeat
   if activeInbox is missing value then
+    if accountFilter is not "" then
+      return "ERROR: No inbox found for account " & accountFilter
+    end if
     try
       set activeInbox to inbox
     end try
@@ -466,6 +530,9 @@ end tell
 `;
       try {
         const raw = await runAppleScript(script);
+        if (raw.startsWith('ERROR:')) {
+          return { content: [{ type: 'text' as const, text: raw }], isError: true };
+        }
         const allMessages = parseMessageRows(parseTSV(raw), 'Inbox');
 
         const matches = allMessages
