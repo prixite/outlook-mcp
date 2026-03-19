@@ -962,7 +962,21 @@ tell application "Microsoft Outlook"
     try
       set unreadCount to unread count of f
     end try
-    set output to output & folderName & tab & (unreadCount as string) & linefeed
+    set acctLabel to ""
+    try
+      set acct to account of f
+      try
+        set ae to email address of acct
+        if ae is not missing value then set acctLabel to ae
+      end try
+      if acctLabel is "" then
+        try
+          set an to name of acct
+          if an is not missing value then set acctLabel to an
+        end try
+      end if
+    end try
+    set output to output & folderName & tab & (unreadCount as string) & tab & acctLabel & linefeed
   end repeat
   return output
 end tell
@@ -970,9 +984,10 @@ end tell
       try {
         const raw = await runAppleScript(script);
         const rows = parseTSV(raw);
-        const folders: OutlookFolder[] = rows.map((r) => ({
+        const folders = rows.map((r) => ({
           name: r[0] ?? '',
           unreadCount: parseInt(r[1] ?? '0', 10),
+          ...(r[2] && r[2] !== '' ? { account: r[2] } : {}),
         }));
         if (folders.length === 0) {
           return { content: [{ type: 'text' as const, text: 'No folders found.' }] };
