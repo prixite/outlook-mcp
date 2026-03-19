@@ -39,17 +39,36 @@ const FOLDER_SELECTOR = `
       set accountOk to true
       if accountFilter is not "" then
         set accountOk to false
-        try
-          set folderAcct to account of f
+        if accountFilter is "unknown" or accountFilter is "?" then
+          -- Target folders where account cannot be determined (e.g. Google accounts in new Outlook)
+          set folderAcctLabel to ""
           try
-            if (email address of folderAcct) is accountFilter then set accountOk to true
-          end try
-          if not accountOk then
+            set folderAcct to account of f
             try
-              if (name of folderAcct) is accountFilter then set accountOk to true
+              set ae to email address of folderAcct
+              if ae is not missing value then set folderAcctLabel to ae
             end try
-          end if
-        end try
+            if folderAcctLabel is "" then
+              try
+                set an to name of folderAcct
+                if an is not missing value then set folderAcctLabel to an
+              end try
+            end if
+          end try
+          if folderAcctLabel is "" then set accountOk to true
+        else
+          try
+            set folderAcct to account of f
+            try
+              if (email address of folderAcct) is accountFilter then set accountOk to true
+            end try
+            if not accountOk then
+              try
+                if (name of folderAcct) is accountFilter then set accountOk to true
+              end try
+            end if
+          end try
+        end if
       end if
       if accountOk then
         if searchName is "Inbox" and accountFilter is "" then
@@ -189,7 +208,7 @@ export function registerEmailTools(server: McpServer): void {
           .string()
           .optional()
           .default('')
-          .describe('Account email to filter by (e.g. "you@toptal.com"). Use outlook_list_accounts to see available accounts.'),
+          .describe('Account email to filter by (e.g. "you@toptal.com"). Use "unknown" to target accounts whose email cannot be determined via AppleScript (e.g. Google accounts in new Outlook for Mac). Use outlook_list_accounts to see available accounts.'),
         limit: z
           .number()
           .int()
@@ -435,7 +454,7 @@ end tell
           .string()
           .optional()
           .default('')
-          .describe('Account email to filter by (e.g. "you@toptal.com"). Use outlook_list_accounts to see available accounts.'),
+          .describe('Account email to filter by (e.g. "you@toptal.com"). Use "unknown" to target accounts whose email cannot be determined via AppleScript (e.g. Google accounts in new Outlook for Mac). Use outlook_list_accounts to see available accounts.'),
         limit: z
           .number()
           .int()
@@ -477,17 +496,36 @@ tell application "Microsoft Outlook"
       set accountOk to true
       if accountFilter is not "" then
         set accountOk to false
-        try
-          set folderAcct to account of f
+        if accountFilter is "unknown" or accountFilter is "?" then
+          -- Target folders where account cannot be determined (e.g. Google accounts in new Outlook)
+          set folderAcctLabel to ""
           try
-            if (email address of folderAcct) is accountFilter then set accountOk to true
-          end try
-          if not accountOk then
+            set folderAcct to account of f
             try
-              if (name of folderAcct) is accountFilter then set accountOk to true
+              set ae to email address of folderAcct
+              if ae is not missing value then set folderAcctLabel to ae
             end try
-          end if
-        end try
+            if folderAcctLabel is "" then
+              try
+                set an to name of folderAcct
+                if an is not missing value then set folderAcctLabel to an
+              end try
+            end if
+          end try
+          if folderAcctLabel is "" then set accountOk to true
+        else
+          try
+            set folderAcct to account of f
+            try
+              if (email address of folderAcct) is accountFilter then set accountOk to true
+            end try
+            if not accountOk then
+              try
+                if (name of folderAcct) is accountFilter then set accountOk to true
+              end try
+            end if
+          end try
+        end if
       end if
       if accountOk then
         if accountFilter is not "" then
